@@ -22,15 +22,17 @@ Some code adapted from "Fundamentos de Sistemas Operativos", Silberschatz et al.
 
 // ----------- ENUMERATIONS ---------------------------------------------
 enum status { SUSPENDED, SIGNALED, EXITED, CONTINUED};
-enum job_state { FOREGROUND, BACKGROUND, STOPPED };
+enum job_state { FOREGROUND, BACKGROUND, STOPPED, RESPAWNABLE };
 static char* status_strings[] = { "Suspended", "Signaled", "Exited", "Continued"};
-static char* state_strings[] = { "Foreground", "Background", "Stopped" };
+static char* state_strings[] = { "Foreground", "Background", "Stopped", "Respawnable" };
 
 // ----------- JOB TYPE FOR JOB LIST ------------------------------------
 typedef struct job_
 {
 	pid_t pgid; /* group id = process lider id */
 	char * command; /* program name */
+	char ** args;
+	int timeout;
 	enum job_state state;
 	struct job_ *next; /* next job in the list */
 } job;
@@ -39,7 +41,7 @@ typedef struct job_
 //      PUBLIC FUNCTIONS
 // -----------------------------------------------------------------------
 
-void get_command(char inputBuffer[], int size, char *args[],int *background);
+void get_command(char inputBuffer[], int size, char *args[],int *background, int *respawnable);
 
 job * new_job(pid_t pid, const char * command, enum job_state state);
 
@@ -92,4 +94,3 @@ void block_signal(int signal, int block);
 
 // -----------------------------------------------------------------------
 #endif
-

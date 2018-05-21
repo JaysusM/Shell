@@ -37,6 +37,10 @@ void bg(char *args) {
 	} else
 		pos = atoi(args);
 
+		if(pos == 0){
+			printf("Process not found");
+			return;
+		}
 		block_SIGCHLD();
 		selectedJob = get_item_bypos(joblist, pos);
 		unblock_SIGCHLD();
@@ -64,6 +68,10 @@ void fg(char *args) {
 	} else
 		pos = atoi(args);
 
+	if(pos == 0){
+			printf("Process not found");
+			return;
+	}
 	block_SIGCHLD();
 	auxJob = get_item_bypos(joblist, pos);
 	selectedJob = new_job(auxJob->pgid, auxJob->command, auxJob->state);
@@ -89,13 +97,29 @@ void fg(char *args) {
 void SIGCHLD_handler(int signal) {
 	block_SIGCHLD();
 	int status, info;
-
-	for(int i = 1; i <= list_size(joblist); i++) {
+	int i;
+	for(i = 1; i <= list_size(joblist); i++) {
 		job* currentjob = get_item_bypos(joblist, i);
 		int pid_wait = waitpid(currentjob->pgid, &status, WNOHANG | WUNTRACED | WCONTINUED);
 
 		if(pid_wait) {
 			enum status state = analyze_status(status, &info);
+			if(currentjob->state == RESPAWNABLE && state != EXITED) {
+					int pid_fork = fork();
+					if(pid_fork) {
+						currentjob->pgid = pid_fork;
+					} else {
+						new_process_group(getpid());
+						restore_terminal_signals();
+
+						if(execvp(currentjob->command, currentjob->args)) {
+							printf("Command not valid...");
+							exit(-1);
+						}
+						exit(0);
+					}
+					return;
+				}
 			if(state == EXITED || info == SIGKILL || info == SIGTERM) {
 					delete_job(joblist, currentjob);
 					i--;
@@ -107,6 +131,23 @@ void SIGCHLD_handler(int signal) {
 	unblock_SIGCHLD();
 }
 
+void timeout_handler(int signal) {
+	block_SIGCHLD();
+	int i;
+	job *job;
+	for(i = 1; i <= list_size(joblist); i++) {
+		job = get_item_bypos(joblist, i);
+		if(job->timeout != -1) {
+				job->timeout = job->timeout - 1;
+				if(job->timeout == 0) {
+					kill(-(job->pgid), SIGKILL);
+				}
+		}
+	}
+	unblock_SIGCHLD();
+	alarm(1);
+}
+
 // -----------------------------------------------------------------------
 //                            MAIN
 // -----------------------------------------------------------------------
@@ -115,16 +156,20 @@ int main(void)
 {
 	char inputBuffer[MAX_LINE]; /* buffer to hold the command entered */
 	int background;             /* equals 1 if a command is followed by '&' */
+	int respawnable;						/* equals 1 if a command is followed by '+' */
 	char *args[MAX_LINE/2];     /* command line (of 256) has max of 128 arguments */
 	// probably useful variables:
 	int pid_fork, pid_wait; /* pid for created and waited process */
 	int status;             /* status returned by wait */
 	enum status status_res; /* status processed by analyze_status() */
 	int info;				/* info processed by analyze_status() */
+	int timeout;    /* timeout for process */
 
 	joblist = new_list("job list");
 
 	signal(SIGCHLD, SIGCHLD_handler);
+	signal(SIGALRM, timeout_handler);
+	alarm(1);
 
 	new_process_group(getpid());
 	ignore_terminal_signals();
@@ -134,7 +179,7 @@ int main(void)
 	{
 		printf("\nShell$ ");
 		fflush(stdout);
-		get_command(inputBuffer, MAX_LINE, args, &background);  /* get next command */
+		get_command(inputBuffer, MAX_LINE, args, &background, &respawnable);  /* get next command */
 
 		if(args[0]==NULL) continue;   // if empty command
 
@@ -145,7 +190,23 @@ int main(void)
 			 (4) Shell shows a status message for processed command
 			 (5) loop returns to get_commnad() function
 		*/
-
+	if(strcmp(args[0], "time-out") == 0)
+	{
+		if(args[1] == NULL || args[2] == NULL)
+			continue; //If timeout or command are null
+		timeout = atoi(args[1]);
+		if(timeout <= 0) {
+			printf("Timeout must be greater than zero");
+			continue;
+		}
+		int i = 2;
+		while(args[i] != NULL) {
+			args[i-2] = args[i];
+			i++;
+		}
+		args[i-1] = NULL;
+		args[i-2] = NULL;
+	}
 	if(strcmp(args[0], "bg") == 0)
 	{
 		bg(args[1]);
@@ -173,14 +234,38 @@ int main(void)
 			printf("Error creating child process");
 			continue;
 		} else if(pid_fork) {
-			if(!background) {
+			if(respawnable) {
+				char *auxArgs[MAX_LINE/2];
+				int i = 0;
+				while(args[i] != NULL) {
+					strcpy(auxArgs[i], args[i]);
+					i++;
+				}
+				auxArgs[i] = NULL;
+				job* job = new_job(pid_fork, args[0], RESPAWNABLE);
+				job->args = auxArgs;
+				if(timeout > 0) {
+					job->timeout = timeout;
+				} else {
+					job->timeout = -1;
+				}
+				add_job(joblist, job);
+				printf("Respawnable job running... pid: %d, command: %s", pid_fork, args[0]);
+			}
+			else if(!background) {
 				set_terminal(pid_fork);
 				pid_wait = waitpid(pid_fork, &status, WUNTRACED);
 				status = analyze_status(status, &info);
 				set_terminal(getpid());
+				job *job = new_job(pid_fork, args[0], STOPPED);
+				if(timeout > 0) {
+					job->timeout = timeout;
+				} else {
+					job->timeout = -1;
+				}
 				if(info != 255) {
 					if(status_strings[status] == "Suspended")
-						add_job(joblist, new_job(pid_fork, args[0], STOPPED));
+						add_job(joblist, job);
 				//	else
 				//		add_job(joblist, new_job(pid_fork, args[0], BACKGROUND);
 
@@ -188,7 +273,13 @@ int main(void)
 					pid_fork, args[0], status_strings[status], info);
 				}
 			} else {
-				add_job(joblist, new_job(pid_fork, args[0], BACKGROUND));
+				job *job = new_job(pid_fork, args[0], BACKGROUND);
+				if(timeout > 0) {
+					job->timeout = timeout;
+				} else {
+					job->timeout = -1;
+				}
+				add_job(joblist, job);
 				printf("Background job running... pid: %d, command: %s", pid_fork, args[0]);
 			}
 		} else {
