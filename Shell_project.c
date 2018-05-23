@@ -254,18 +254,24 @@ int main(void)
 			}
 			else if(!background) {
 				set_terminal(pid_fork);
-				pid_wait = waitpid(pid_fork, &status, WUNTRACED);
-				status = analyze_status(status, &info);
-				set_terminal(getpid());
-				job *job = new_job(pid_fork, args[0], STOPPED);
+				job *job = new_job(pid_fork, args[0], FOREGROUND);
 				if(timeout > 0) {
 					job->timeout = timeout;
 				} else {
 					job->timeout = -1;
 				}
+				add_job(joblist, job);
+				pid_wait = waitpid(pid_fork, &status, WUNTRACED);
+				status = analyze_status(status, &info);
+				set_terminal(getpid());
 				if(info != 255) {
 					if(status_strings[status] == "Suspended")
-						add_job(joblist, job);
+					{
+						job = get_item_bypid(joblist, pid_fork);
+						job->state = STOPPED;
+					} else {
+						delete_job(joblist, job);
+					}
 				//	else
 				//		add_job(joblist, new_job(pid_fork, args[0], BACKGROUND);
 
