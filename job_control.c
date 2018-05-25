@@ -242,7 +242,7 @@ void block_signal(int signal, int block)
 {
 	/* declara e inicializa máscara */
 	sigset_t block_sigchld;
-	sigemptyset(&block_sigchld );
+	sigemptyset(&block_sigchld);
 	sigaddset(&block_sigchld,signal);
 	if(block)
 	{

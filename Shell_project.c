@@ -75,6 +75,8 @@ void fg(char *args) {
 	block_SIGCHLD();
 	auxJob = get_item_bypos(joblist, pos);
 	selectedJob = new_job(auxJob->pgid, auxJob->command, auxJob->state);
+	selectedJob->blockedSignals = auxJob->blockedSignals;
+	selectedJob->blockedSignals = auxJob->blockedSignals;
 	delete_job(joblist, auxJob);
 	unblock_SIGCHLD();
 	set_terminal(selectedJob->pgid);
@@ -164,6 +166,8 @@ int main(void)
 	enum status status_res; /* status processed by analyze_status() */
 	int info;				/* info processed by analyze_status() */
 	int timeout;    /* timeout for process */
+	int blockedSignals[MAX_LINE-3];
+	int numberOfBlockedSignals = 0;
 
 	joblist = new_list("job list");
 
@@ -190,6 +194,52 @@ int main(void)
 			 (4) Shell shows a status message for processed command
 			 (5) loop returns to get_commnad() function
 		*/
+	if(strcmp(args[0], "mask") == 0)
+	{
+		int error = 0;
+		int i = 1;
+		while(args[i] != NULL && strcmp(args[i],"-c") != 0) {
+			int signal = atoi(args[i]);
+			if(signal <= 0 || signal >= 65)
+			{
+				printf("Signal value is not correct, it must be between 0 and 64");
+				error = 1;
+				break;
+			}
+			blockedSignals[i-1] = signal;
+			numberOfBlockedSignals++;
+			i++;
+		}
+
+		if(error == 1) {
+			continue;
+		}
+
+		if(args[i] == NULL || args[i+1] == NULL) {
+			printf("Command format is not correct, should be: mask <SIGNAL> -c <COMMAND>");
+			continue;
+		}
+
+		//We set the pointer after '-c'
+		i++;
+		int auxI = 0;
+
+		while(args[i] != NULL) {
+			args[auxI] = args[i];
+			auxI++;
+			i++;
+		}
+
+		while(auxI != i) {
+			args[auxI] = NULL;
+			auxI++;
+		}
+
+		for(int i = 0; i < numberOfBlockedSignals; i++) {
+			block_signal(blockedSignals[i], 1);
+		}
+	}
+
 	if(strcmp(args[0], "time-out") == 0)
 	{
 		if(args[1] == NULL || args[2] == NULL)
@@ -274,7 +324,6 @@ int main(void)
 					}
 				//	else
 				//		add_job(joblist, new_job(pid_fork, args[0], BACKGROUND);
-
 					printf("Foreground pid: %i, command %s, %s, info: %i",
 					pid_fork, args[0], status_strings[status], info);
 				}
@@ -296,6 +345,9 @@ int main(void)
 				exit(-1);
 			}
 			exit(0);
+		}
+		for(int i = 0; i < numberOfBlockedSignals; i++) {
+			block_signal(blockedSignals[i], 0);
 		}
 	}
 
